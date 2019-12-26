@@ -1,0 +1,137 @@
+#!/usr/bin/env python
+
+import csv
+import ipaddress
+import time
+import socket
+import shodan
+from datetime import datetime
+from sys import argv
+from tabulate import tabulate
+
+
+api_key = 'YOU API KEY'
+api = shodan.Shodan(api_key)
+list_dom = ['ru', 'net', 'com', 'edu', 'org']
+
+
+def check_argv():
+    """
+    Check argument
+    :return: uses check_ip() or parse_file()
+    """
+    print("Checking input data!")
+
+    if len(argv) == 2:
+        stdin = argv[1]
+        if stdin.split('.')[-1] == 'txt':
+            parse_file(stdin)
+        if stdin.split('.')[-1] in list_dom:
+            check_ip(domain_check(stdin))
+        else:
+            check_ip(stdin)
+    else:
+        print("""
+              Using: shodan_api.py + ip address.
+              You must enter a valid IPv4 address: x.x.x.x where x in range(1, 256)
+              """)
+
+
+def domain_check(domain):
+    """
+    Uses service nslookup
+    :param domain: like "google.com"
+    :return: IPv4 address
+    """
+    print("Resolvin domain: {}".format(domain))
+
+    try:
+        ip_address = socket.gethostbyname(domain)
+        return ip_address
+    except socket.gaierror as err:
+        print(err)
+
+
+def parse_file(file_name):
+    """
+    Parses file with ip, domain etc.
+    :param file_name: *.txt format
+    :return: uses check_ip()
+    """
+    print("reading {}".format(file_name))
+    try:
+        with open(file_name, 'r') as f:
+            a = f.readlines()
+            for line in a:
+                if line:
+                    check_ip(line.strip())
+
+    except FileNotFoundError as err:
+        print('Please, enter valid file name!')
+
+
+def check_ip(ip):
+    """
+    Check - is it a valid IP address
+    :param ip: ip address
+    :return: uses run_api()
+    """
+    print("Checking ip - {}".format(ip))
+    try:
+        ipaddress.ip_address(ip)
+        write_csv(ip, 'write_csv.csv')
+
+    except ValueError as err:
+        print(err)
+
+
+def run_api(ip_add):
+    """
+    Uses Shodan_Api
+    :param ip_add: ipv4 address
+    :return: nothing
+    """
+    print("Running shodan_api for {}".format(ip_add))
+    rezult = []
+    try:
+        host = api.host(ip_add)
+        
+        for item in host['data']:
+            half_result = {}
+            vulne_s = []
+            if item.get('vulns'):
+                for key, value in item['vulns'].items():
+                    if float(value.get('cvss', '1')) >= 7:
+                        vulne_s.append(key)
+            half_result['IP'] = host['ip_str']
+            half_result['Port'] = item['port']
+            half_result['Product'] = item.get('product', 'n/a')
+            half_result['Version'] = item.get('version', 'n/a')
+
+            if vulne_s:
+                half_result['Vulns'] = '; '.join(vulne_s)
+            else:
+                half_result['Vulns'] = 'No vulns'
+
+            half_result['Data'] = str(datetime.now()).split()[0]
+            rezult.append(half_result)
+            time.sleep(1)
+        print(tabulate(rezult, headers='keys', tablefmt="grid", stralign="center"))
+        return rezult
+
+    except shodan.APIError as e:
+        print('Error: {}'.format(e))
+
+
+def write_csv(ip, file_name):
+    data = run_api(ip)
+    print("Writing csv file - {}".format(file_name))
+    with open(file_name, 'a') as f:
+        writer = csv.DictWriter(f, fieldnames=list(data[0].keys()), quoting=csv.QUOTE_NONNUMERIC)
+        writer.writeheader()
+        for d in data:
+            writer.writerow(d)
+
+
+if __name__ == '__main__':
+    check_argv()
